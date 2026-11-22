@@ -1,1 +1,0 @@
-# CAMPUS-NEXUS Backend Package

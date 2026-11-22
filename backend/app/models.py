@@ -413,13 +413,30 @@ class ReviewCard(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
     student_id = Column(String(64), ForeignKey("users.id"), nullable=False, index=True)
-    concept_id = Column(String(64), ForeignKey("concept_nodes.id"), nullable=False)
+    concept_id = Column(Integer, ForeignKey("concept_nodes.id"), nullable=False)
     stability = Column(Float, nullable=False, default=1.0)
     difficulty = Column(Float, nullable=False, default=5.0)
     reps = Column(Integer, nullable=False, default=0)
     last_review = Column(DateTime(timezone=True), default=utcnow)
     next_due = Column(DateTime(timezone=True), default=utcnow)
     state = Column(String(32), nullable=False, default="learning")
+
+
+class ConceptAttempt(Base):
+    """
+    BKT Concept Attempt Log (v2):
+    Records each student attempt on a concept for BKT mastery updates and DKT analytics.
+    """
+    __tablename__ = "concept_attempts"
+
+    id = Column(String(64), primary_key=True)
+    tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
+    student_id = Column(String(64), ForeignKey("users.id"), nullable=False, index=True)
+    course_id = Column(String(64), ForeignKey("courses.id"), nullable=False, index=True)
+    concept_code = Column(String(40), nullable=False, index=True)
+    is_correct = Column(Boolean, nullable=False)
+    source = Column(String(32), nullable=False, default="assessment")  # assessment, micro_drill, manual
+    occurred_at = Column(DateTime(timezone=True), default=utcnow)
 
 
 class AttendanceScan(Base):

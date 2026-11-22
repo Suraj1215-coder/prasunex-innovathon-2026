@@ -398,7 +398,7 @@ def simulate_grading(payload: GradingSimulateRequest, db: Session = Depends(get_
 # ==============================================================================
 
 @router.get("/analytics/dkt/{student_id}")
-def get_student_dkt_analytics(student_id: str, db: Session = Depends(get_db)):
+def get_student_dkt_analytics(student_id: str, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """
     Retrieve Deep Knowledge Tracing (DKT-Graph) analytics for a student:
     - Computes mastery vector across course concept DAG
@@ -415,13 +415,13 @@ def get_student_dkt_analytics(student_id: str, db: Session = Depends(get_db)):
 
     if states:
         for st in states:
-            concept = db.query(ConceptNode).filter(ConceptNode.id == st.concept_id).first()
-            c_name = concept.name if concept else st.concept_id
+            concept = db.query(ConceptNode).filter(ConceptNode.concept_code == st.concept_code).first()
+            c_name = concept.name if concept else st.concept_code
             m_val = round(st.dkt_mastery * 100, 1)
             concept_mastery[c_name] = m_val
             if st.dkt_mastery < 0.50:
                 prerequisite_blockers.append({
-                    "concept_id": st.concept_id,
+                    "concept_id": st.concept_code,
                     "concept_name": c_name,
                     "mastery_pct": m_val,
                     "blocker_severity": "Critical" if m_val < 35 else "Moderate",
@@ -822,7 +822,7 @@ class AttendanceScanRequest(BaseModel):
 
 
 @router.post("/attendance/scan")
-def verify_attendance_scan(payload: AttendanceScanRequest, db: Session = Depends(get_db)):
+def verify_attendance_scan(payload: AttendanceScanRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """
     Anti-Proxy Dynamic HMAC Attendance Scanner:
     - Validates 15-second rotating HMAC-SHA256 token freshness
@@ -844,9 +844,18 @@ def verify_attendance_scan(payload: AttendanceScanRequest, db: Session = Depends
             detail="Anti-Proxy Warning: Device fingerprint has already registered attendance for another student in this session!"
         )
 
-    # Compute geofence distance (Simulated classroom at 28.6139, 77.2090)
+    # Compute geofence distance using Haversine formula (accurate for all latitudes)
     classroom_lat, classroom_lon = 28.6139, 77.2090
-    dist_meters = math.sqrt((payload.latitude - classroom_lat)**2 + (payload.longitude - classroom_lon)**2) * 111000
+
+    def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+        R = 6_371_000  # Earth radius in metres
+        phi1, phi2 = math.radians(lat1), math.radians(lat2)
+        dphi = math.radians(lat2 - lat1)
+        dlambda = math.radians(lon2 - lon1)
+        a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+        return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+    dist_meters = _haversine_m(payload.latitude, payload.longitude, classroom_lat, classroom_lon)
 
     if dist_meters > 50.0:
         raise HTTPException(
@@ -892,7 +901,7 @@ def verify_attendance_scan(payload: AttendanceScanRequest, db: Session = Depends
 # ==============================================================================
 
 @router.get("/admin/equipment/forecast")
-def get_equipment_failure_forecast(tenant_id: str = "nitx", db: Session = Depends(get_db)):
+def get_equipment_failure_forecast(tenant_id: str = "nitx", user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """
     Weibull Failure Distribution Analysis (Equation 4.6):
     P(fail in 14d) = 1 - exp(-[((t+14)/lambda)^k - (t/lambda)^k])
@@ -975,7 +984,7 @@ class GrievanceSubmitRequest(BaseModel):
 
 
 @router.post("/grievance/submit")
-def submit_grievance(payload: GrievanceSubmitRequest, db: Session = Depends(get_db)):
+def submit_grievance(payload: GrievanceSubmitRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     """
     Unified Desk:
     - Facilities: Semantic SBERT deduplication (cosine similarity >= 0.82)
@@ -990,11 +999,17 @@ def submit_grievance(payload: GrievanceSubmitRequest, db: Session = Depends(get_
     if payload.category == "sensitive_zk":
         # Create anonymous ZK report
         tracking_code = "ZK-" + uuid.uuid4().hex[:12].upper()
+        # Generate simple key shares for ZK report (dean and ICC copies)
+        _zk_seed = uuid.uuid4().hex
+        _dean_share = hashlib.sha256(f"dean-{_zk_seed}".encode()).hexdigest()
+        _icc_share = hashlib.sha256(f"icc-{_zk_seed}".encode()).hexdigest()
         zk_rep = ZKReport(
             tenant_id=t_id,
             tracking_code=tracking_code,
             category="Harassment/Ragging" if "rag" in payload.title.lower() else "Dean Whistleblower",
             encrypted_body=f"{payload.title}: {payload.description}",
+            key_share_dean=_dean_share,
+            key_share_icc=_icc_share,
             nullifier_hash=payload.nullifier_hash or f"nullifier_{uuid.uuid4().hex[:16]}",
             status="Received by Dean",
             thread_json=json.dumps([{"sender": "student", "message": payload.description, "time": now.isoformat()}]),

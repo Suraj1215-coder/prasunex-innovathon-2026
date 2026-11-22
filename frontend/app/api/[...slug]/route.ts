@@ -103,7 +103,7 @@ async function tryProxyToFastAPI(req: NextRequest, path: string, method: string)
           method,
           headers,
           body,
-          signal: AbortSignal.timeout(1800),
+          signal: AbortSignal.timeout(5000),
         });
         if (res.ok) {
           const data = await res.json();
@@ -311,22 +311,6 @@ export async function GET(req: NextRequest, { params }: { params: { slug: string
         explanation: "All leaf nodes in a B+ Tree form a continuous linked list. For range queries (e.g., age BETWEEN 20 AND 30), once the lower bound is located in O(log N), subsequent records are read sequentially in O(k) without backtracking up to root.",
       },
     ]);
-  }
-
-  if (path === "admin/equipment/forecast" || path === "v1/admin/equipment/forecast") {
-    return NextResponse.json({
-      status: "success",
-      total_scanned: 5,
-      high_risk_count: 2,
-      weibull_params: { beta: 2.1, eta: 5000 },
-      equipment: [
-        { id: "EQ-401", name: "High-Speed Centrifuge Alpha", location: "Biotech Lab 2", runtime_hours: 4820, failure_risk: 0.84, status: "Critical", recommended: "Immediate rotor bearing lubrication and seal replacement" },
-        { id: "EQ-402", name: "RF Spectrum Analyzer 6GHz", location: "ECE Wireless Lab", runtime_hours: 3100, failure_risk: 0.62, status: "Warning", recommended: "Recalibrate local oscillator drift before mid-terms" },
-        { id: "EQ-403", name: "Central Server UPS Battery Bank", location: "Server Room A", runtime_hours: 8900, failure_risk: 0.79, status: "Critical", recommended: "Dispatch cell impedance test; replace bank 2 cells" },
-        { id: "EQ-404", name: "3D Rapid Prototyping Printer", location: "Innovation Hub", runtime_hours: 1450, failure_risk: 0.22, status: "Nominal", recommended: "Routine nozzle cleaning at 1500h mark" },
-        { id: "EQ-405", name: "Optical Emission Spectrometer", location: "Materials Testing Lab", runtime_hours: 2200, failure_risk: 0.18, status: "Nominal", recommended: "Standard argon purge check on schedule" },
-      ],
-    });
   }
 
   if (path === "privacy/reports") {
