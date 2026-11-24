@@ -1,143 +1,82 @@
-from datetime import datetime, timezone
-from typing import Any
-import hashlib
-import json
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text
-from sqlalchemy.orm import relationship
-
-from .database import Base
-
-
-def utcnow():
-    return datetime.now(timezone.utc)
-
-
-class College(Base):
-    __tablename__ = "colleges"
-
-    id = Column(String(64), primary_key=True)
-    name = Column(String(200), nullable=False)
-    code = Column(String(32), unique=True, nullable=False)
-    tier = Column(String(40), nullable=False, default="core")
-    student_count = Column(Integer, nullable=False, default=100)
-    rsa_n = Column(Text, nullable=True)
-    rsa_e = Column(Text, nullable=True)
-    rsa_d = Column(Text, nullable=True)
-    icc_rsa_n = Column(Text, nullable=True)
-    icc_rsa_e = Column(Text, nullable=True)
-    icc_rsa_d = Column(Text, nullable=True)
+    category = Column(String(64), nullable=False, default="general")
+    location = Column(String(200), nullable=False, default="Unknown")
+    manufacturer = Column(String(120), nullable=True)
+    model_number = Column(String(120), nullable=True)
+    installed_at = Column(DateTime(timezone=True), nullable=False, default=utcnow)
+    maintenance_logs = Column(Text, nullable=False, default="[]")  # JSON array of service events
+    weibull_k = Column(Float, nullable=True)      # shape parameter
+    weibull_lambda = Column(Float, nullable=True)  # scale parameter (days)
+    last_service_at = Column(DateTime(timezone=True), nullable=True)
+    status = Column(String(24), nullable=False, default="operational")  # operational, degraded, failed, retired
+    photo_ref = Column(String(500), nullable=True)
     created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    __table_args__ = (
+        CheckConstraint("weibull_k IS NULL OR weibull_k > 0", name="ck_equipment_weibull_k_positive"),
+        CheckConstraint("weibull_lambda IS NULL OR weibull_lambda > 0", name="ck_equipment_weibull_lambda_positive"),
+        Index("ix_equipment_tenant_location", "tenant_id", "location"),
+    )
 
 
-class User(Base):
-    __tablename__ = "users"
+class MaintenanceEvent(Base):
+    """Service / repair event for equipment."""
+    __tablename__ = "maintenance_events"
 
     id = Column(String(64), primary_key=True)
     tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
-    email = Column(String(200), nullable=False, index=True)
-    hashed_password = Column(String(256), nullable=False)
-    full_name = Column(String(160), nullable=False)
-    role = Column(String(40), nullable=False)  # student, professor, hod, dean, technician, warden, admin, recruiter
-    department = Column(String(80), nullable=False, default="CSE")
-    semester = Column(Integer, nullable=False, default=5)
-    cgpa = Column(Float, nullable=False, default=8.0)
-    karma_points = Column(Integer, nullable=False, default=0)
-    opt_in_recruiter = Column(Boolean, nullable=False, default=True)
+    equipment_id = Column(String(64), ForeignKey("equipment.id"), nullable=False, index=True)
+    event_type = Column(String(32), nullable=False, default="repair")  # repair, inspection, replacement, calibration
+    description = Column(Text, nullable=True)
+    performed_by = Column(String(64), ForeignKey("users.id"), nullable=True)
+    cost = Column(Numeric(10, 2), nullable=True)
+    is_failure = Column(Boolean, nullable=False, default=False)
+    event_date = Column(DateTime(timezone=True), nullable=False, default=utcnow)
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
-    # Aliases for specification consistency (name, email, passwordHash, role, createdAt)
-    @property
-    def name(self) -> str:
-        return self.full_name
 
-    @name.setter
-    def name(self, val: str):
-        self.full_name = val
+# ============================================================================
+# 13. EVENTS — OCR content, embeddings, faculty_approval_flag
+# ============================================================================
 
-    @property
-    def passwordHash(self) -> str:
-        return self.hashed_password
-
-    @passwordHash.setter
-    def passwordHash(self, val: str):
-        self.hashed_password = val
-
-    @property
-    def createdAt(self):
-        return self.created_at
-
-
-class Course(Base):
-    __tablename__ = "courses"
+class Event(Base):
+    """
+    v2 required: OCR content, embeddings, faculty_approval_flag
+    Campus events / notices parsed from posters/text.
+    """
+    __tablename__ = "events"
 
     id = Column(String(64), primary_key=True)
     tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
-    code = Column(String(32), nullable=False)
-    title = Column(String(200), nullable=False)
-    credits = Column(Integer, nullable=False, default=4)
-    department = Column(String(80), nullable=False, default="CSE")
-    semester = Column(Integer, nullable=False, default=5)
-    professor_id = Column(String(64), ForeignKey("users.id"), nullable=True)
-    syllabus_text = Column(Text, nullable=True)
-    co_po_config_json = Column(Text, nullable=False, default="{}")
-
-
-class CourseEnrollment(Base):
-    __tablename__ = "course_enrollments"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
-    course_id = Column(String(64), ForeignKey("courses.id"), nullable=False, index=True)
-    student_id = Column(String(64), ForeignKey("users.id"), nullable=False, index=True)
-    semester = Column(Integer, nullable=False, default=5)
-    attendance_percentage = Column(Float, nullable=False, default=80.0)
-    final_grade = Column(String(8), nullable=True)
-
-
-class ConceptNode(Base):
-    __tablename__ = "concept_nodes"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
-    course_id = Column(String(64), ForeignKey("courses.id"), nullable=False, index=True)
-    concept_code = Column(String(40), nullable=False)
-    name = Column(String(160), nullable=False)
-    prereq_codes_json = Column(Text, nullable=False, default="[]")
-
-
-class AssessmentQuestion(Base):
-    __tablename__ = "assessment_questions"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
-    course_id = Column(String(64), ForeignKey("courses.id"), nullable=False, index=True)
-    q_code = Column(String(32), nullable=False)
-    prompt = Column(Text, nullable=False)
-    options_json = Column(Text, nullable=False, default="[]")
-    correct_idx = Column(Integer, nullable=False, default=0)
-    concept_code = Column(String(40), nullable=False)
-    co_code = Column(String(16), nullable=False, default="CO1")
-    bloom_level = Column(String(16), nullable=False, default="L2")
-    po_codes_json = Column(Text, nullable=False, default='["PO1","PO2"]')
-    max_marks = Column(Float, nullable=False, default=10.0)
-    irt_b = Column(Float, nullable=False, default=0.0)  # difficulty
-    irt_a = Column(Float, nullable=False, default=1.0)  # discrimination
-
-
-class MarkRecord(Base):
-    __tablename__ = "mark_records"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
-    course_id = Column(String(64), ForeignKey("courses.id"), nullable=False, index=True)
-    student_id = Column(String(64), ForeignKey("users.id"), nullable=False, index=True)
-    question_scores_json = Column(Text, nullable=False, default="{}")
-    total_score = Column(Float, nullable=False, default=0.0)
-    z_score = Column(Float, nullable=False, default=0.0)
-    letter_grade = Column(String(8), nullable=False, default="B")
-    encrypted_marks = Column(Text, nullable=True)  # AES-256 encrypted marks for privacy
+    title = Column(String(300), nullable=False)
+    category = Column(String(64), nullable=False, default="general")  # hackathon, scholarship, fest, seminar, notice
+    organizer = Column(String(200), nullable=True)
+    description = Column(Text, nullable=True)
+    ocr_content = Column(Text, nullable=True)   # raw OCR-extracted text
+    ocr_confidence = Column(Float, nullable=True)
+    embedding = Column(Vector384(), nullable=True)
+    faculty_approval_flag = Column(Boolean, nullable=False, default=False)
+    approved_by = Column(String(64), ForeignKey("users.id"), nullable=True)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    source_poster_ref = Column(String(500), nullable=True)  # encrypted storage ref
+    start_date = Column(DateTime(timezone=True), nullable=True)
+    end_date = Column(DateTime(timezone=True), nullable=True)
+    registration_deadline = Column(DateTime(timezone=True), nullable=True)
+    location = Column(String(200), nullable=True)
+    eligibility = Column(Text, nullable=True)
+    external_url = Column(String(500), nullable=True)
+    is_published = Column(Boolean, nullable=False, default=False)
     created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
+    __table_args__ = (
+        Index("ix_event_tenant_category", "tenant_id", "category"),
+    )
+
+
+# ============================================================================
+# 14. KNOWLEDGE STATE (DKT)
+# ============================================================================
 
 class KnowledgeState(Base):
     __tablename__ = "knowledge_states"
@@ -153,6 +92,29 @@ class KnowledgeState(Base):
     correct_count = Column(Integer, nullable=False, default=0)
     updated_at = Column(DateTime(timezone=True), default=utcnow)
 
+    __table_args__ = (
+        UniqueConstraint("student_id", "course_id", "concept_code", name="uq_knowledge_state"),
+    )
+
+
+# ============================================================================
+# 15. STUDY PLANS
+# ============================================================================
+
+class StudyPlan(Base):
+    """Container for a student's what-if / study optimization session."""
+    __tablename__ = "study_plans"
+
+    id = Column(String(64), primary_key=True)
+    tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
+    student_id = Column(String(64), ForeignKey("users.id"), nullable=False, index=True)
+    total_weekly_hours = Column(Float, nullable=False, default=20.0)
+    allocation_json = Column(Text, nullable=False, default="{}")  # {course_id: hours}
+    projected_gpa = Column(Float, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime(timezone=True), default=utcnow)
+    updated_at = Column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
 
 class StudyPlanItem(Base):
     __tablename__ = "study_plan_items"
@@ -161,6 +123,7 @@ class StudyPlanItem(Base):
     tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
     student_id = Column(String(64), ForeignKey("users.id"), nullable=False, index=True)
     course_id = Column(String(64), ForeignKey("courses.id"), nullable=False, index=True)
+    plan_id = Column(String(64), ForeignKey("study_plans.id"), nullable=True)
     concept_code = Column(String(40), nullable=False)
     scheduled_date = Column(String(10), nullable=False, index=True)
     duration_minutes = Column(Integer, nullable=False, default=25)
@@ -169,46 +132,9 @@ class StudyPlanItem(Base):
     created_at = Column(DateTime(timezone=True), default=utcnow)
 
 
-class AttendanceRecord(Base):
-    __tablename__ = "attendance_records"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
-    student_id = Column(String(64), ForeignKey("users.id"), nullable=False, index=True)
-    course_id = Column(String(64), ForeignKey("courses.id"), nullable=False, index=True)
-    attended_classes = Column(Integer, nullable=False, default=0)
-    total_classes = Column(Integer, nullable=False, default=0)
-    remaining_classes = Column(Integer, nullable=False, default=15)
-    updated_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-class TimetableEntry(Base):
-    __tablename__ = "timetables"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
-    course_id = Column(String(64), ForeignKey("courses.id"), nullable=False, index=True)
-    day_of_week = Column(String(16), nullable=False)  # Monday, Tuesday, ...
-    start_time = Column(String(10), nullable=False)   # 09:00
-    end_time = Column(String(10), nullable=False)     # 10:00
-    room = Column(String(64), nullable=False, default="Hall-A")
-    professor_id = Column(String(64), ForeignKey("users.id"), nullable=True)
-    is_cancelled = Column(Boolean, nullable=False, default=False)
-    rescheduled_info = Column(String(160), nullable=True)
-    updated_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-class SyllabusTopic(Base):
-    __tablename__ = "syllabus_topics"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
-    course_id = Column(String(64), ForeignKey("courses.id"), nullable=False, index=True)
-    topic_title = Column(String(200), nullable=False)
-    order_index = Column(Integer, nullable=False, default=1)
-    is_covered = Column(Boolean, nullable=False, default=False)
-    covered_at = Column(DateTime(timezone=True), nullable=True)
-
+# ============================================================================
+# 16. MAINTENANCE / FACILITIES TICKETS & DEDUP GROUPS
+# ============================================================================
 
 class MaintenanceTicket(Base):
     __tablename__ = "maintenance_tickets"
@@ -219,262 +145,16 @@ class MaintenanceTicket(Base):
     title = Column(String(200), nullable=False)
     description = Column(Text, nullable=False)
     location = Column(String(160), nullable=False, default="Lab 2 - Bench 14")
+    asset_id = Column(String(64), ForeignKey("equipment.id"), nullable=True, index=True)
     photo_path = Column(String(300), nullable=True)
     vision_category = Column(String(64), nullable=False, default="general")
     vision_confidence = Column(Float, nullable=False, default=0.0)
+    embedding = Column(Vector384(), nullable=True)
     embedding_json = Column(Text, nullable=False, default="[]")
+    dedup_group_id = Column(String(64), ForeignKey("dedup_groups.id"), nullable=True, index=True)
     merged_into_id = Column(String(64), nullable=True)
     merged_count = Column(Integer, nullable=False, default=1)
     assigned_to_id = Column(String(64), ForeignKey("users.id"), nullable=True)
-    priority = Column(String(24), nullable=False, default="Medium")  # Low, Medium, High, Critical
+    priority = Column(String(24), nullable=False, default="Medium")
     priority_weight = Column(Float, nullable=False, default=1.0)
-    status = Column(String(32), nullable=False, default="Ticket verified")  # Ticket verified -> Technician dispatched -> Component replaced -> Student sign-off
-    sla_category = Column(String(32), nullable=False, default="equipment")  # equipment (48h), hostel (24h)
-    sla_deadline = Column(DateTime(timezone=True), nullable=False)
-    escalation_level = Column(Integer, nullable=False, default=0)  # 0=none, 1=HoD notified, 2=Dean notified
-    resolution_notes = Column(Text, nullable=True)
-    resolution_photo = Column(String(300), nullable=True)
-    audit_ledger_json = Column(Text, nullable=False, default="[]")
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-class TicketAuditLedger(Base):
-    __tablename__ = "ticket_audit_ledger"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
-    ticket_id = Column(String(64), ForeignKey("maintenance_tickets.id"), nullable=False, index=True)
-    action = Column(String(64), nullable=False)
-    actor_id = Column(String(64), nullable=True)
-    prev_hash = Column(String(64), nullable=False, default="0" * 64)
-    current_hash = Column(String(64), nullable=False)
-    payload_json = Column(Text, nullable=False)
-    timestamp = Column(DateTime(timezone=True), default=utcnow)
-
-    @classmethod
-    def compute_hash(cls, prev_hash: str, ticket_id: str, action: str, payload_json: str, ts: Any = None) -> str:
-        if isinstance(ts, datetime):
-            ts_str = ts.strftime("%Y-%m-%d %H:%M:%S")
-        elif ts is not None:
-            ts_str = str(ts)[:19].replace("T", " ")
-        else:
-            ts_str = ""
-        raw = f"{prev_hash}|{ticket_id}|{action}|{payload_json}|{ts_str}"
-        return hashlib.sha256(raw.encode("utf-8")).hexdigest()
-
-
-class ZKReport(Base):
-    __tablename__ = "zk_reports"
-
-    id = Column(String(64), primary_key=True)
-    tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
-    tracking_code = Column(String(32), unique=True, nullable=False)
-    category = Column(String(64), nullable=False)
-    encrypted_body = Column(Text, nullable=False)
-    key_share_dean = Column(Text, nullable=False)
-    key_share_icc = Column(Text, nullable=False)
-    nullifier_hash = Column(String(128), unique=True, nullable=True)
-    status = Column(String(32), nullable=False, default="Submitted")
-    thread_json = Column(Text, nullable=False, default="[]")
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-class ZKTokenNonce(Base):
-    __tablename__ = "zk_token_nonces"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
-    token_hash = Column(String(128), unique=True, nullable=False)
-    used_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-class StudyMatch(Base):
-    __tablename__ = "study_matches"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
-    course_id = Column(String(64), ForeignKey("courses.id"), nullable=False)
-    concept_code = Column(String(40), nullable=False)
-    tutor_id = Column(String(64), ForeignKey("users.id"), nullable=False)
-    learner_id = Column(String(64), ForeignKey("users.id"), nullable=False)
-    score = Column(Float, nullable=False, default=0.0)
-    status = Column(String(24), nullable=False, default="Active")
-    tutor_confirmed = Column(Boolean, nullable=False, default=False)
-    learner_confirmed = Column(Boolean, nullable=False, default=False)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-class SquadRequest(Base):
-    __tablename__ = "squad_requests"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
-    student_id = Column(String(64), ForeignKey("users.id"), nullable=False)
-    event_id = Column(String(64), nullable=False)
-    skills_json = Column(Text, nullable=False, default="[]")
-    preferred_role = Column(String(64), nullable=False)  # Frontend, Backend, ML, Design, Pitch
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-class HackathonEvent(Base):
-    __tablename__ = "hackathon_events"
-
-    id = Column(String(64), primary_key=True)
-    tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
-    title = Column(String(200), nullable=False)
-    organizer = Column(String(120), nullable=False)
-    deadline = Column(String(32), nullable=False)
-    source = Column(String(40), nullable=False, default="Seeded")
-    tags_json = Column(Text, nullable=False, default="[]")
-    teams_json = Column(Text, nullable=False, default="[]")
-
-
-class GatePass(Base):
-    __tablename__ = "gate_passes"
-
-    id = Column(String(64), primary_key=True)
-    tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
-    student_id = Column(String(64), ForeignKey("users.id"), nullable=False)
-    event_id = Column(String(64), ForeignKey("hackathon_events.id"), nullable=False)
-    token = Column(String(64), unique=True, nullable=False)
-    qr_code_svg = Column(Text, nullable=True)
-    is_used = Column(Boolean, nullable=False, default=False)
-    used_at = Column(DateTime(timezone=True), nullable=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-class RecruiterInvite(Base):
-    __tablename__ = "recruiter_invites"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
-    recruiter_id = Column(String(64), ForeignKey("users.id"), nullable=False)
-    student_id = Column(String(64), ForeignKey("users.id"), nullable=False)
-    role_title = Column(String(160), nullable=False)
-    ctc_lpa = Column(Float, nullable=False, default=12.0)
-    message = Column(Text, nullable=False)
-    status = Column(String(24), nullable=False, default="Sent")
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-class GradeChangeLedger(Base):
-    __tablename__ = "grade_change_ledger"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
-    course_id = Column(String(64), ForeignKey("courses.id"), nullable=False)
-    actor_id = Column(String(64), ForeignKey("users.id"), nullable=False)
-    action = Column(String(64), nullable=False)  # curve_applied, grace_marks, drop_question, undo
-    before_json = Column(Text, nullable=False)
-    after_json = Column(Text, nullable=False)
-    timestamp = Column(DateTime(timezone=True), default=utcnow)
-
-
-class ZKGroupMember(Base):
-    """
-    Semaphore ZK Group Member Registry (v2):
-    Stores Semaphore identity commitments for campus student bodies.
-    Guarantees privacy: Strictly NO user_id stored to ensure zero linkability.
-    """
-    __tablename__ = "zk_group_members"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    group_id = Column(String(64), nullable=False, index=True)
-    identity_commitment = Column(String(128), unique=True, nullable=False, index=True)
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-class ExamScheduleSlot(Base):
-    """
-    CP-SAT Optimized Exam Timetable (v2):
-    Tracks hall allocations, slots, invigilators, and schedule rollback versions.
-    """
-    __tablename__ = "exam_schedule_slots"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
-    course_id = Column(String(64), ForeignKey("courses.id"), nullable=False)
-    room_id = Column(String(64), nullable=False)
-    slot_time = Column(DateTime(timezone=True), nullable=False)
-    invigilator_id = Column(String(64), ForeignKey("users.id"), nullable=True)
-    cohort = Column(String(64), nullable=False, default="CSE-2026")
-    rollback_version = Column(Integer, nullable=False, default=1)
-    status = Column(String(32), nullable=False, default="scheduled")
-    created_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-class ReviewCard(Base):
-    """
-    FSRS Spaced Repetition Flashcard / Micro-Drill State (v2):
-    Tracks topic stability S, difficulty D, and retrieval schedule.
-    """
-    __tablename__ = "review_cards"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
-    student_id = Column(String(64), ForeignKey("users.id"), nullable=False, index=True)
-    concept_id = Column(Integer, ForeignKey("concept_nodes.id"), nullable=False)
-    stability = Column(Float, nullable=False, default=1.0)
-    difficulty = Column(Float, nullable=False, default=5.0)
-    reps = Column(Integer, nullable=False, default=0)
-    last_review = Column(DateTime(timezone=True), default=utcnow)
-    next_due = Column(DateTime(timezone=True), default=utcnow)
-    state = Column(String(32), nullable=False, default="learning")
-
-
-class ConceptAttempt(Base):
-    """
-    BKT Concept Attempt Log (v2):
-    Records each student attempt on a concept for BKT mastery updates and DKT analytics.
-    """
-    __tablename__ = "concept_attempts"
-
-    id = Column(String(64), primary_key=True)
-    tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
-    student_id = Column(String(64), ForeignKey("users.id"), nullable=False, index=True)
-    course_id = Column(String(64), ForeignKey("courses.id"), nullable=False, index=True)
-    concept_code = Column(String(40), nullable=False, index=True)
-    is_correct = Column(Boolean, nullable=False)
-    source = Column(String(32), nullable=False, default="assessment")  # assessment, micro_drill, manual
-    occurred_at = Column(DateTime(timezone=True), default=utcnow)
-
-
-class AttendanceScan(Base):
-    """
-    Anti-Proxy Dynamic HMAC Attendance Scan (v2):
-    Tracks 15-second rotating QR scans, device fingerprints, geofence, and anomaly scores.
-    """
-    __tablename__ = "attendance_scans"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
-    student_id = Column(String(64), ForeignKey("users.id"), nullable=False, index=True)
-    course_id = Column(String(64), ForeignKey("courses.id"), nullable=False)
-    device_hash = Column(String(64), nullable=False)
-    latitude = Column(Float, nullable=True)
-    longitude = Column(Float, nullable=True)
-    geofence_status = Column(String(32), nullable=False, default="within_range")
-    anomaly_score = Column(Float, nullable=False, default=0.05)
-    verified = Column(Boolean, nullable=False, default=True)
-    timestamp = Column(DateTime(timezone=True), default=utcnow)
-
-
-class LabEquipment(Base):
-    """
-    Weibull Failure Reliability Registry (v2):
-    Tracks physical laboratory equipment and hostel utilities with fitted Weibull parameters (k, lambda).
-    """
-    __tablename__ = "lab_equipment"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    tenant_id = Column(String(64), ForeignKey("colleges.id"), nullable=False, index=True)
-    name = Column(String(128), nullable=False)
-    asset_tag = Column(String(64), unique=True, nullable=False)
-    category = Column(String(64), nullable=False, default="Lab Instrument")
-    location = Column(String(128), nullable=False)
-    installed_at = Column(DateTime(timezone=True), default=utcnow)
-    age_days = Column(Integer, nullable=False, default=180)
-    k_shape = Column(Float, nullable=False, default=2.2)
-    lambda_scale = Column(Float, nullable=False, default=720.0)
-    last_service = Column(DateTime(timezone=True), default=utcnow)
-    status = Column(String(32), nullable=False, default="operational")
+    status = Column(String(32), nullable=False, default="Ticket verified")
