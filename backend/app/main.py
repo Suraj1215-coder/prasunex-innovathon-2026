@@ -35,6 +35,7 @@ from .modules.opportunity_radar import router as opportunity_router
 from .modules.facilities import router as facilities_router
 from .modules.privacy import router as privacy_router
 from .modules.grading import router as grading_router, get_cache_stats
+from .modules.grading_simulate import router as grading_simulate_router
 from .modules.dkt_engine import router as dkt_router
 from .modules.network import router as network_router
 from .modules.business_privacy import router as business_privacy_router
@@ -179,6 +180,7 @@ app.include_router(opportunity_router)
 app.include_router(facilities_router)
 app.include_router(privacy_router)
 app.include_router(grading_router)
+app.include_router(grading_simulate_router)   # Phase 09 M05/M06 grading sandbox
 app.include_router(dkt_router)
 app.include_router(network_router)
 app.include_router(business_privacy_router)

@@ -410,17 +410,105 @@ export async function POST(req: NextRequest, { params }: { params: { slug: strin
   }
 
   if (path === "v1/grading/simulate" || path === "grading/simulate") {
-    return NextResponse.json({
-      course_id: "northstar-cs301",
-      method: "gap_aware",
-      sample_size: 62,
-      mean: 74.2,
-      std_dev: 11.4,
-      cutoffs: { O: 91.0, "A+": 82.5, A: 73.0, B: 63.5, C: 52.0, D: 41.0 },
-      distribution: { O: 6, "A+": 16, A: 22, B: 12, C: 5, D: 1, F: 0 },
-      heartbreak_trapped_students: 0,
-      gap_aware_savings: "14 students rescued from fractional boundary failure",
-    });
+    try {
+      const body = await req.json().catch(() => ({}));
+      const mode = body.mode || "gap_aware";
+      const N = 62;
+      const mean = 74.2 + (body.mean_shift || 0);
+      const std = 11.4 * (body.std_scale || 1);
+      // Simulate grade distribution
+      const gradeCounts: Record<string,number> = { O: 6, "A+": 14, A: 20, "B+": 12, B: 7, C: 2, F: 1 };
+      const compTable = [
+        { grade: "O",  actual_count: 6,  actual_share_pct: 9.7,  normal_share_pct: 3.6,  z_cutoff: 1.8 },
+        { grade: "A+", actual_count: 14, actual_share_pct: 22.6, normal_share_pct: 7.9,  z_cutoff: 1.2 },
+        { grade: "A",  actual_count: 20, actual_share_pct: 32.3, normal_share_pct: 15.9, z_cutoff: 0.6 },
+        { grade: "B+", actual_count: 12, actual_share_pct: 19.4, normal_share_pct: 22.6, z_cutoff: 0.0 },
+        { grade: "B",  actual_count: 7,  actual_share_pct: 11.3, normal_share_pct: 22.6, z_cutoff: -0.6 },
+        { grade: "C",  actual_count: 2,  actual_share_pct: 3.2,  normal_share_pct: 20.7, z_cutoff: -1.5 },
+        { grade: "F",  actual_count: 1,  actual_share_pct: 1.6,  normal_share_pct: 6.7,  z_cutoff: null },
+      ];
+      const irtItems = [
+        { q_code: "Q1", max_marks: 10, r_pbis: 0.52, irt_b_difficulty: -0.84, irt_a_discrimination: 1.3, is_defective: false, flag_severity: "none", alert: "Standard healthy discrimination.", pass_rate_pct: 78.2 },
+        { q_code: "Q2", max_marks: 10, r_pbis: 0.38, irt_b_difficulty: 0.21, irt_a_discrimination: 0.95, is_defective: false, flag_severity: "none", alert: "Standard healthy discrimination.", pass_rate_pct: 61.4 },
+        { q_code: "Q3", max_marks: 10, r_pbis: 0.11, irt_b_difficulty: 1.44, irt_a_discrimination: 0.28, is_defective: true, flag_severity: "warning", alert: "LOW DISCRIMINATION (r_pbis=0.11 < 0.15): Consider dropping or grace marks — faculty authorization required.", pass_rate_pct: 44.7 },
+        { q_code: "Q4", max_marks: 10, r_pbis: -0.18, irt_b_difficulty: 0.87, irt_a_discrimination: 0.05, is_defective: true, flag_severity: "critical", alert: "NEGATIVE DISCRIMINATION (r_pbis=-0.18): High-performing students answered WRONG. Ambiguous phrasing or keying error. Faculty MUST review.", pass_rate_pct: 55.1 },
+        { q_code: "Q5", max_marks: 10, r_pbis: 0.44, irt_b_difficulty: -0.31, irt_a_discrimination: 1.1, is_defective: false, flag_severity: "none", alert: "Standard healthy discrimination.", pass_rate_pct: 71.9 },
+      ];
+      const dpResult = mode === "gap_aware" ? {
+        adjusted_cutoffs: [91.2, 82.0, 72.5, 63.1, 52.3, 41.0],
+        trapped_before: 7, trapped_after: 0, rescued_count: 7,
+        moves: [
+          { grade: "O",  nominal_cutoff: 91.6, adjusted_cutoff: 91.2, rescued: 2 },
+          { grade: "A+", nominal_cutoff: 82.4, adjusted_cutoff: 82.0, rescued: 1 },
+          { grade: "A",  nominal_cutoff: 72.9, adjusted_cutoff: 72.5, rescued: 3 },
+          { grade: "B+", nominal_cutoff: 63.1, adjusted_cutoff: 63.1, rescued: 0 },
+          { grade: "B",  nominal_cutoff: 52.3, adjusted_cutoff: 52.3, rescued: 1 },
+          { grade: "C",  nominal_cutoff: 41.0, adjusted_cutoff: 41.0, rescued: 0 },
+        ],
+      } : null;
+      return NextResponse.json({
+        simulation_token: `sim-mock-${Date.now().toString(16)}`,
+        course_id: body.course_id || "cs301",
+        mode,
+        simulated_at: new Date().toISOString(),
+        sample_size: N,
+        max_marks: body.max_marks || 100,
+        mean: Math.round(mean * 100) / 100,
+        std_dev: Math.round(std * 100) / 100,
+        raw_mean: 74.2,
+        raw_std: 11.4,
+        skewness: -0.34,
+        silverman_bandwidth_h: 4.812,
+        auto_suggest_kde: false,
+        histogram: [
+          { bin_start: 40, bin_end: 45, count: 1 }, { bin_start: 45, bin_end: 50, count: 2 },
+          { bin_start: 50, bin_end: 55, count: 2 }, { bin_start: 55, bin_end: 60, count: 3 },
+          { bin_start: 60, bin_end: 65, count: 5 }, { bin_start: 65, bin_end: 70, count: 8 },
+          { bin_start: 70, bin_end: 75, count: 11 },{ bin_start: 75, bin_end: 80, count: 10 },
+          { bin_start: 80, bin_end: 85, count: 9 }, { bin_start: 85, bin_end: 90, count: 7 },
+          { bin_start: 90, bin_end: 95, count: 3 }, { bin_start: 95, bin_end: 100, count: 1 },
+        ],
+        grade_counts: gradeCounts,
+        comparison_table: compTable,
+        student_preview: Array.from({ length: 10 }, (_, i) => ({
+          score: Math.round((mean - 15 + i * 3.5) * 10) / 10,
+          z_score: Math.round((-1.3 + i * 0.3) * 100) / 100,
+          letter_grade: compTable[Math.min(i, compTable.length - 1)].grade,
+        })),
+        irt_analysis: irtItems,
+        irt_summary: {
+          total_questions: irtItems.length,
+          defective_count: 2,
+          critical_flag_count: 1,
+          note: "Faculty authorization required before dropping or nullifying any flagged question.",
+        },
+        gap_aware: dpResult,
+        gmm_analysis: {
+          k: 2,
+          means: [61.4, 82.1],
+          stds: [8.2, 7.6],
+          weights: [0.42, 0.58],
+          bic_scores: { 1: 412.3, 2: 398.7, 3: 405.1 },
+          natural_gaps: [71.75],
+        },
+        effective_z_cutoffs: { O: 1.8, "A+": 1.2, A: 0.6, "B+": 0.0, B: -0.6, C: -1.5 },
+        effective_abs_cutoffs: { O: 90, "A+": 80, A: 70, "B+": 60, B: 50, C: 40 },
+        boundary_warnings: [],
+        fairness_warnings: [
+          "ALGORITHMIC DISCLAIMER: Grade boundaries proposed by this system are computational tools. They are NOT guaranteed to be fair solely because an algorithm generated them. Faculty review and governance approval are mandatory.",
+        ],
+        approval_status: {
+          professor_approved: body.professor_approved || false,
+          committed: false,
+          commit_errors: body.commit && !body.professor_approved
+            ? ["COMMIT BLOCKED: professor_approved must be True."]
+            : [],
+          note: "This simulation produces proposals only. Grades are not final until approved and committed.",
+        },
+      });
+    } catch {
+      return NextResponse.json({ error: "Simulation failed" }, { status: 500 });
+    }
   }
 
   if (path === "v1/marks/ingest-photo") {
@@ -473,6 +561,21 @@ export async function POST(req: NextRequest, { params }: { params: { slug: strin
         { course_code: "CS401", course_name: "Machine Learning & AI", slot_id: 3, date: "2026-12-05", time: "09:30 - 12:30", room_id: "LH-101", enrolled: 54 },
         { course_code: "MA201", course_name: "Discrete Mathematics", slot_id: 4, date: "2026-12-08", time: "09:30 - 12:30", room_id: "AUD-1", enrolled: 95 },
       ],
+    });
+  }
+
+  // Phase 09 — M05/M06 Grading Sandbox simulate (GET history)
+  if (path.startsWith("v1/grading/simulate/history/") || path.startsWith("grading/simulate/history/")) {
+    const courseId = path.split("/").pop() || "cs301";
+    return NextResponse.json({
+      course_id: courseId,
+      entries: [
+        { id: 3, action: "phase09_simulate_commit_gap_aware | approved_by=prof@nitx.demo | note=Reviewed and approved after department meeting", actor_id: "usr-prof-01", timestamp: new Date(Date.now() - 86400000).toISOString() },
+        { id: 2, action: "curve_saved_relative", actor_id: "usr-prof-01", timestamp: new Date(Date.now() - 172800000).toISOString() },
+        { id: 1, action: "grace_marks_all_2.0", actor_id: "usr-prof-01", timestamp: new Date(Date.now() - 259200000).toISOString() },
+      ],
+      total: 3,
+      note: "To rollback, use POST /api/grading/undo with course_id.",
     });
   }
 
